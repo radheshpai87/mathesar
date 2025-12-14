@@ -1,7 +1,17 @@
+<!--
+  @component
+
+  Enables inline editing of column name and description with a consolidated save action.
+-->
 <script lang="ts">
   import { _ } from 'svelte-i18n';
 
-  import EditableTextWithActions from '@mathesar/components/EditableTextWithActions.svelte';
+  import {
+    CancelOrProceedButtonPair,
+    LabeledInput,
+    TextArea,
+    TextInput,
+  } from '@mathesar-component-library';
   import type {
     ColumnsDataStore,
     ProcessedColumn,
@@ -14,6 +24,16 @@
   export let currentRoleOwnsTable: boolean;
 
   $: ({ columns } = columnsDataStore);
+
+  let isEditing = false;
+  let name = '';
+  let description = '';
+  let isSubmitting = false;
+
+  $: if (!isEditing) {
+    name = column.column.name;
+    description = column.column.description ?? '';
+  }
 
   function getValidationErrors(newName: string): string[] {
     if (newName === column.column.name) {
@@ -29,54 +49,99 @@
     return [];
   }
 
-  async function handleColumnNameChange(newName: string): Promise<void> {
-    try {
-      await columnsDataStore.rename(column.column.id, newName);
-    } catch (error) {
-      toast.error(`${$_('unable_to_rename_column')} ${getErrorMessage(error)}`);
-    }
+  $: validationErrors = getValidationErrors(name);
+  $: hasChanges =
+    name !== column.column.name ||
+    description !== (column.column.description ?? '');
+  $: canSave = validationErrors.length === 0 && hasChanges;
+
+  function startEditing() {
+    if (!currentRoleOwnsTable) return;
+    name = column.column.name;
+    description = column.column.description ?? '';
+    isEditing = true;
   }
 
-  async function handleColumnDescriptionChange(
-    description: string,
-  ): Promise<void> {
+  function handleCancel() {
+    name = column.column.name;
+    description = column.column.description ?? '';
+    isEditing = false;
+  }
+
+  async function handleSave() {
+    if (!canSave) return;
+
+    isSubmitting = true;
     try {
-      await columnsDataStore.updateDescription(
+      await columnsDataStore.updateNameAndDescription(
         column.column.id,
-        description ?? null,
+        name,
+        description || null,
       );
+      isEditing = false;
     } catch (error) {
       toast.error(
-        `${$_('unable_to_update_column_desc')} ${getErrorMessage(error)}`,
+        `${$_('unable_to_update_column')} ${getErrorMessage(error)}`,
       );
+    } finally {
+      isSubmitting = false;
     }
   }
 </script>
 
-<div class="column-property column-name">
-  <span class="label">{$_('column_name')}</span>
-  <EditableTextWithActions
-    initialValue={column.column.name}
-    onSubmit={handleColumnNameChange}
-    {getValidationErrors}
-    disabled={!currentRoleOwnsTable}
-  />
-</div>
+<div class="column-properties">
+  {#if !isEditing}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="column-property" on:click={startEditing}>
+      <span class="label">{$_('column_name')}</span>
+      <TextInput value={column.column.name} disabled={!currentRoleOwnsTable} />
+    </div>
 
-<div class="column-property column-description">
-  <span class="label">{$_('column_description')}</span>
-  <EditableTextWithActions
-    initialValue={column.column.description ?? ''}
-    onSubmit={handleColumnDescriptionChange}
-    isLongText
-    disabled={!currentRoleOwnsTable}
-  />
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="column-property" on:click={startEditing}>
+      <span class="label">{$_('column_description')}</span>
+      <TextArea value={column.column.description ?? ''} disabled={!currentRoleOwnsTable} />
+    </div>
+  {:else}
+    <div class="editing-container">
+      <LabeledInput label={$_('column_name')} layout="stacked">
+        <TextInput bind:value={name} disabled={isSubmitting} autofocus />
+        {#if validationErrors.length}
+          {#each validationErrors as error}
+            <span class="error">{error}</span>
+          {/each}
+        {/if}
+      </LabeledInput>
+
+      <LabeledInput label={$_('column_description')} layout="stacked">
+        <TextArea bind:value={description} disabled={isSubmitting} />
+      </LabeledInput>
+
+      <CancelOrProceedButtonPair
+        onProceed={handleSave}
+        onCancel={handleCancel}
+        isProcessing={isSubmitting}
+        canProceed={canSave}
+        proceedButton={{ label: $_('save') }}
+        size="small"
+      />
+    </div>
+  {/if}
 </div>
 
 <style lang="scss">
+  .column-properties {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
   .column-property {
     display: flex;
     flex-direction: column;
+    cursor: pointer;
 
     .label {
       color: var(--color-fg-label);
@@ -85,5 +150,19 @@
     > :global(* + *) {
       margin-top: 0.25rem;
     }
+  }
+
+  .editing-container {
+    display: flex;
+    flex-direction: column;
+
+    > :global(* + *) {
+      margin-top: 0.5rem;
+    }
+  }
+
+  .error {
+    color: var(--color-fg-danger);
+    font-size: var(--sm2);
   }
 </style>

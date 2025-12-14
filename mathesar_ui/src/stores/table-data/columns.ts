@@ -132,6 +132,19 @@ export class ColumnsDataStore extends EventHandler<{
     );
   }
 
+  async updateNameAndDescription(
+    id: RawColumnWithMetadata['id'],
+    name: string,
+    description: string | null,
+  ): Promise<void> {
+    await api.columns
+      .patch({ ...this.apiContext, column_data_list: [{ id, name, description }] })
+      .run();
+    this.fetchedColumns.update((columns) =>
+      columns.map((c) => (c.id === id ? { ...c, name, description } : c)),
+    );
+  }
+
   async setNullabilityOfColumn(
     column: RawColumnWithMetadata,
     nullable: boolean,

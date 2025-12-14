@@ -822,6 +822,7 @@
   "unable_to_load_release_data": "現在インストールされているバージョンは [version]ですが、このリリースに関するデータを読み込むことができませんでした。",
   "unable_to_open_record_without_primary_key": "主キーのないレコードは開くことができません",
   "unable_to_rename_column": "列名を変更できません。",
+  "unable_to_update_column": "列を更新できません。",
   "unable_to_save_changes": "変更を保存できません",
   "unable_to_save_exploration": "探索を保存できません。",
   "unable_to_update_allow_duplicates_column": "列 {columnName} の「複製を許可」を更新できません。",

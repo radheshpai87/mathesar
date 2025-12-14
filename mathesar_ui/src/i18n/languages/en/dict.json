@@ -858,6 +858,7 @@
   "unable_to_open_record_without_primary_key": "Unable to open record without primary key",
   "unable_to_rename_column": "Unable to rename column.",
   "unable_to_save_changes": "Unable to save changes",
+  "unable_to_update_column": "Unable to update column.",
   "unable_to_save_exploration": "Unable to save Exploration.",
   "unable_to_update_allow_duplicates_column": "Unable to update \"Allow Duplicates\" of column {columnName}.",
   "unable_to_update_allow_null_column": "Unable to update \"Allow NULL\" of column {columnName}.",
