@@ -8340,3 +8340,79 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql;
+
+
+-- test_list_records_with_non_orderable_column_type ---------------------------------------------
+CREATE OR REPLACE FUNCTION __setup_non_orderable_type_table() RETURNS SETOF TEXT AS $$
+BEGIN
+  CREATE TABLE type_test (
+    id serial NOT NULL PRIMARY KEY,
+    circle_col circle
+  );
+  INSERT INTO type_test (circle_col) VALUES ('<(1, 2), 3>');
+  INSERT INTO type_test (circle_col) VALUES ('<(4, 5), 6>');
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION test_list_records_with_non_orderable_column_type()
+RETURNS SETOF TEXT AS $$
+DECLARE
+  rel_id oid;
+  result jsonb;
+BEGIN
+  PERFORM __setup_non_orderable_type_table();
+  rel_id := 'type_test'::regclass::oid;
+  
+  -- Test that we can list records from a table with a non-orderable column type
+  -- without specifying an explicit order
+  result := msar.list_records_from_table(
+    tab_id => rel_id,
+    limit_ => null,
+    offset_ => null,
+    order_ => null,
+    filter_ => null,
+    group_ => null
+  );
+  
+  RETURN NEXT ok(
+    result IS NOT NULL,
+    'Should successfully list records from table with circle column type'
+  );
+  
+  RETURN NEXT is(
+    (result->>'count')::int,
+    2,
+    'Should return correct count of records'
+  );
+  
+  RETURN NEXT ok(
+    jsonb_array_length(result->'results') = 2,
+    'Should return all records'
+  );
+  
+  -- Test that explicitly ordering by a non-orderable column is gracefully handled
+  -- (the non-orderable column should be filtered out)
+  result := msar.list_records_from_table(
+    tab_id => rel_id,
+    limit_ => null,
+    offset_ => null,
+    order_ => '[{"attnum": 2, "direction": "asc"}]',  -- attnum 2 is circle_col
+    filter_ => null,
+    group_ => null
+  );
+  
+  RETURN NEXT ok(
+    result IS NOT NULL,
+    'Should handle explicit order by non-orderable column gracefully'
+  );
+  
+  RETURN NEXT is(
+    (result->>'count')::int,
+    2,
+    'Should still return correct count when ordering by non-orderable column'
+  );
+  
+  DROP TABLE type_test;
+END;
+$$ LANGUAGE plpgsql;

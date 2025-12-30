@@ -1142,6 +1142,7 @@ INSERT INTO msar.all_mathesar_objects VALUES
   ('msar', 'msar.get_score_expr(oid,jsonb)', 'FUNCTION', NULL),
   ('msar', 'msar.get_simple_mapping_join_cte(jsonb,text)', 'FUNCTION', NULL),
   ('msar', 'msar.get_simple_mapping_regclass(jsonb)', 'FUNCTION', NULL),
+  ('msar', 'msar.get_orderable_columns(oid)', 'FUNCTION', NULL),
   ('msar', 'msar.get_selectable_columns(oid)', 'FUNCTION', NULL),
   ('msar', 'msar.get_selectable_pkey_attnum(regclass)', 'FUNCTION', NULL),
   ('msar', 'msar.get_table(regclass)', 'FUNCTION', NULL),

@@ -4425,6 +4425,40 @@ END;
 $$ LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT PARALLEL SAFE;
 
 
+CREATE OR REPLACE FUNCTION msar.get_orderable_columns(tab_id oid) RETURNS TABLE(attnum smallint) AS $$
+/*
+Get a list of columns that can be used in ORDER BY clauses.
+
+A column is orderable if it has a '<' operator defined for its type.
+
+Args:
+  tab_id: The OID of the table whose orderable columns we'll get.
+
+Returns:
+  A table with one column (attnum) containing the attribute numbers of orderable columns.
+*/
+SELECT DISTINCT att.attnum
+FROM pg_catalog.pg_attribute att
+  INNER JOIN pg_catalog.pg_cast ON att.atttypid=castsource
+  INNER JOIN pg_catalog.pg_operator ON casttarget=oprleft
+WHERE
+  att.attrelid = tab_id
+  AND att.attnum > 0
+  AND NOT att.attisdropped
+  AND castcontext = 'i'
+  AND oprname = '<'
+UNION
+SELECT DISTINCT att.attnum
+FROM pg_catalog.pg_attribute att
+  INNER JOIN pg_catalog.pg_operator ON att.atttypid=oprleft
+WHERE
+  att.attrelid = tab_id
+  AND att.attnum > 0
+  AND NOT att.attisdropped
+  AND oprname = '<';
+$$ LANGUAGE SQL STABLE RETURNS NULL ON NULL INPUT;
+
+
 CREATE OR REPLACE FUNCTION msar.get_pkey_order(tab_id oid) RETURNS jsonb AS $$
 SELECT jsonb_agg(jsonb_build_object('attnum', attnum, 'direction', 'asc'))
 FROM pg_constraint, LATERAL unnest(conkey) attnum
@@ -4433,51 +4467,54 @@ $$ LANGUAGE SQL STABLE RETURNS NULL ON NULL INPUT;
 
 
 CREATE OR REPLACE FUNCTION msar.get_total_order(tab_id oid) RETURNS jsonb AS $$
-WITH orderable_cte AS (
-  SELECT attnum
-  FROM pg_catalog.pg_attribute
-    INNER JOIN pg_catalog.pg_cast ON atttypid=castsource
-    INNER JOIN pg_catalog.pg_operator ON casttarget=oprleft
-  WHERE
-    attrelid = tab_id
-    AND attnum > 0
-    AND NOT attisdropped
-    AND castcontext = 'i'
-    AND oprname = '<'
-  UNION SELECT attnum
-  FROM pg_catalog.pg_attribute
-    INNER JOIN pg_catalog.pg_operator ON atttypid=oprleft
-  WHERE
-    attrelid = tab_id
-    AND attnum > 0
-    AND NOT attisdropped
-    AND oprname = '<'
-  ORDER BY attnum
-)
 SELECT COALESCE(jsonb_agg(jsonb_build_object('attnum', attnum, 'direction', 'asc')), '[]'::jsonb)
--- This privilege check is redundant in context, but may be useful for other callers.
-FROM orderable_cte
--- This privilege check is redundant in context, but may be useful for other callers.
-WHERE has_column_privilege(tab_id, attnum, 'SELECT');
+FROM msar.get_orderable_columns(tab_id)
+WHERE has_column_privilege(tab_id, attnum, 'SELECT')
+ORDER BY attnum;
 $$ LANGUAGE SQL STABLE RETURNS NULL ON NULL INPUT;
 
 
 CREATE OR REPLACE FUNCTION
 msar.build_total_order_expr(tab_id oid, order_ jsonb) RETURNS text AS $$/*
 Build a deterministic order expression for the given table and order JSON.
+
+This function filters the user-provided order to only include orderable columns,
+then appends additional orderable columns to ensure deterministic ordering.
+
 Args:
   tab_id: The OID of the table whose columns we'll order by.
   order_: A JSONB array defining any desired ordering of columns.
 */
-SELECT string_agg(format('%I %s', attnum, msar.sanitize_direction(direction)), ', ')
-FROM jsonb_to_recordset(
-    COALESCE(
-      COALESCE(order_, '[]'::jsonb) || msar.get_pkey_order(tab_id),
-      COALESCE(order_, '[]'::jsonb) || msar.get_total_order(tab_id)
-    )
+WITH orderable_columns AS (
+  SELECT attnum FROM msar.get_orderable_columns(tab_id)
+),
+filtered_order AS (
+  SELECT attnum, direction, ordinality
+  FROM jsonb_to_recordset(order_) WITH ORDINALITY AS x(attnum smallint, direction text, ordinality int)
+  WHERE attnum IN (SELECT attnum FROM orderable_columns)
+    AND has_column_privilege(tab_id, attnum, 'SELECT')
+),
+fallback_order_json AS (
+  SELECT COALESCE(
+    msar.get_pkey_order(tab_id),
+    msar.get_total_order(tab_id)
+  ) AS order_json
+),
+fallback_order AS (
+  SELECT attnum, direction
+  FROM fallback_order_json, jsonb_to_recordset(fallback_order_json.order_json) AS x(attnum smallint, direction text)
+  WHERE attnum NOT IN (SELECT attnum FROM filtered_order)
 )
-  AS x(attnum smallint, direction text)
-WHERE has_column_privilege(tab_id, attnum, 'SELECT');
+SELECT string_agg(
+  format('%I %s', attnum, msar.sanitize_direction(direction)), 
+  ', ' 
+  ORDER BY sort_key
+)
+FROM (
+  SELECT attnum, direction, ordinality AS sort_key FROM filtered_order
+  UNION ALL
+  SELECT attnum, direction, 1000000 + attnum AS sort_key FROM fallback_order
+) combined_order;
 $$ LANGUAGE SQL STABLE;
 
 
