@@ -579,12 +579,62 @@ $$ LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT;
 
 CREATE OR REPLACE FUNCTION msar.cast_to_interval(text)
 RETURNS interval AS $$
+DECLARE
+  input_text text;
+  parsed_interval interval;
+  matches text[][];
+  match_row text[];
+  value_part numeric;
+  unit_part text;
 BEGIN
-  PERFORM $1::numeric;
-  RAISE EXCEPTION '% is a numeric', $1;
+  IF trim($1) = '' THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    PERFORM $1::numeric;
+    RAISE EXCEPTION '% is a numeric', $1;
   EXCEPTION
     WHEN sqlstate '22P02' THEN
-      RETURN $1::interval;
+      NULL;
+  END;
+
+  input_text := trim(lower($1));
+
+  BEGIN
+    parsed_interval := '0 seconds'::interval;
+
+    FOR match_row IN
+      SELECT regexp_matches(input_text, '(\d+(?:\.\d+)?)\s*(ms|[dhms])', 'g')
+    LOOP
+      value_part := match_row[1]::numeric;
+      unit_part := match_row[2];
+
+      CASE unit_part
+        WHEN 'd' THEN
+          parsed_interval := parsed_interval + (value_part || ' days')::interval;
+        WHEN 'h' THEN
+          parsed_interval := parsed_interval + (value_part || ' hours')::interval;
+        WHEN 'm' THEN
+          parsed_interval := parsed_interval + (value_part || ' minutes')::interval;
+        WHEN 's' THEN
+          parsed_interval := parsed_interval + (value_part || ' seconds')::interval;
+        WHEN 'ms' THEN
+          parsed_interval := parsed_interval + (value_part || ' milliseconds')::interval;
+      END CASE;
+    END LOOP;
+
+    IF parsed_interval != '0 seconds'::interval THEN
+      IF regexp_replace(input_text, '(\d+(?:\.\d+)?)\s*(ms|[dhms])', '', 'g') ~ '^\s*$' THEN
+        RETURN parsed_interval;
+      END IF;
+    END IF;
+  EXCEPTION
+    WHEN OTHERS THEN
+      NULL;
+  END;
+
+  RETURN $1::interval;
 END;
 $$ LANGUAGE plpgsql RETURNS NULL ON NULL INPUT;
 
