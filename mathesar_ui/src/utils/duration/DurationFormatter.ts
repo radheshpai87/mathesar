@@ -264,21 +264,37 @@ export default class DurationFormatter implements InputFormatter<string> {
   }
 
   format(canonicalValue: string): string {
-    const timeFormatMatch = canonicalValue.match(
-      /^(\d+):(\d+):(\d+(?:\.\d+)?)$/,
+    const daysMatch = canonicalValue.match(
+      /^(\d+) days? (\d+):(\d+):(\d+(?:\.\d+)?)$/,
     );
+    const timeMatch = canonicalValue.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/);
+
     let isoString = canonicalValue;
 
-    if (timeFormatMatch) {
-      const hours = parseInt(timeFormatMatch[1], 10);
-      const minutes = parseInt(timeFormatMatch[2], 10);
-      const seconds = parseFloat(timeFormatMatch[3]);
+    if (daysMatch) {
+      const days = parseInt(daysMatch[1], 10);
+      const hours = parseInt(daysMatch[2], 10);
+      const minutes = parseInt(daysMatch[3], 10);
+      const seconds = parseFloat(daysMatch[4]);
 
-      isoString = 'PT';
-      if (hours > 0) isoString += `${hours}H`;
-      if (minutes > 0) isoString += `${minutes}M`;
-      if (seconds > 0) isoString += `${seconds}S`;
-      if (isoString === 'PT') isoString = 'PT0S';
+      const dayPart = days > 0 ? `${days}D` : '';
+      const hourPart = hours > 0 ? `${hours}H` : '';
+      const minutePart = minutes > 0 ? `${minutes}M` : '';
+      const secondPart = seconds > 0 ? `${seconds}S` : '';
+
+      const timePart = hourPart + minutePart + secondPart;
+      isoString = dayPart || timePart ? `P${dayPart}T${timePart}` : 'PT0S';
+    } else if (timeMatch) {
+      const hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
+      const seconds = parseFloat(timeMatch[3]);
+
+      const hourPart = hours > 0 ? `${hours}H` : '';
+      const minutePart = minutes > 0 ? `${minutes}M` : '';
+      const secondPart = seconds > 0 ? `${seconds}S` : '';
+
+      const timePart = hourPart + minutePart + secondPart;
+      isoString = timePart ? `PT${timePart}` : 'PT0S';
     }
 
     return shiftAndFormatISODurationString(isoString, this.specification);
