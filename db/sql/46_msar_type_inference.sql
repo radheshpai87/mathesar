@@ -1,6 +1,7 @@
 CREATE TYPE msar.type_compat_details AS (
   type_compatible boolean,
   mathesar_casting boolean,
+  plausibility_score numeric,
   group_sep "char",
   decimal_p "char",
 
@@ -46,6 +47,35 @@ END IF;
 END;
 $$ LANGUAGE plpgsql PARALLEL SAFE STABLE RETURNS NULL ON NULL INPUT;
 
+-- Compute a plausibility score for a given type on a given column.
+CREATE OR REPLACE FUNCTION
+msar.compute_type_score(tab_id regclass, col_id smallint, typ regtype)
+RETURNS numeric AS $$
+DECLARE
+  letters int;
+  digits int;
+BEGIN
+  EXECUTE format(
+    'SELECT
+       SUM(%1$I ~ ''[A-Za-z]'')::int,
+       SUM(%1$I ~ ''[0-9]'')::int
+     FROM %2$I.%3$I',
+    msar.get_column_name(tab_id, col_id),
+    msar.get_relation_schema_name(tab_id),
+    msar.get_relation_name(tab_id)
+  ) INTO letters, digits;
+
+  IF typ = 'numeric'::regtype THEN
+     RETURN digits - letters * 2;
+  ELSIF typ = 'mathesar_types.mathesar_money'::regtype THEN
+     RETURN digits - letters * 3;
+  ELSIF typ = 'text'::regtype THEN
+     RETURN -1e8;  -- Text should be lowest priority, but allow ties to be broken by sequence order
+  ELSE
+     RETURN letters;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION
 msar.find_mathesar_money_attrs(
@@ -134,7 +164,10 @@ BEGIN
   );
   compat_details.mathesar_casting = true;
   compat_details.type_compatible = true;
-EXCEPTION WHEN OTHERS THEN END;
+EXCEPTION WHEN OTHERS THEN
+  compat_details.type_compatible := false;
+  compat_details.plausibility_score := -1e9;
+END;
 $$ LANGUAGE plpgsql RETURNS NULL ON NULL INPUT;
 
 
@@ -172,7 +205,10 @@ BEGIN
   );
   compat_details.mathesar_casting = true;
   compat_details.type_compatible = true;
-EXCEPTION WHEN OTHERS THEN END;
+EXCEPTION WHEN OTHERS THEN
+  compat_details.type_compatible := false;
+  compat_details.plausibility_score := -1e9;
+END;
 $$ LANGUAGE plpgsql RETURNS NULL ON NULL INPUT;
 
 
@@ -212,7 +248,15 @@ BEGIN
       compat_details.mathesar_casting = true;
       compat_details.type_compatible = true;
   END CASE;
-EXCEPTION WHEN OTHERS THEN END;
+
+    compat_details.plausibility_score :=
+      msar.compute_type_score(tab_id, col_id, typ_id);
+
+EXCEPTION WHEN OTHERS THEN
+  -- When type is incompatible, ensure fields are initialized
+  compat_details.type_compatible := false;
+  compat_details.plausibility_score := -1e9;
+END;
 $$ LANGUAGE plpgsql RETURNS NULL ON NULL INPUT;
 
 
@@ -233,11 +277,13 @@ DECLARE
   inferred_type regtype;
   inferred_type_details jsonb;
   test_type_details msar.type_compat_details;
+  best_score numeric := -1e9;
   infer_sequence_raw text[] := ARRAY[
     'boolean',
     'date',
     'numeric',
     'mathesar_types.mathesar_money',
+    'text',
     'uuid',
     'timestamp without time zone',
     'timestamp with time zone',
@@ -265,15 +311,16 @@ BEGIN
   IF inferred_type <> 'text'::regtype OR NOT column_nonempty THEN
     RETURN jsonb_build_object('type', inferred_type);
   END IF;
-  FOREACH test_type IN ARRAY infer_sequence
-    LOOP
-      test_type_details := msar.check_column_type_compat(tab_id, col_id, test_type, test_perc);
-      IF test_type_details.type_compatible THEN
+  FOREACH test_type IN ARRAY infer_sequence LOOP
+    test_type_details := msar.check_column_type_compat(tab_id, col_id, test_type, test_perc);
+
+    IF test_type_details.type_compatible
+      AND test_type_details.plausibility_score > best_score THEN
+        best_score := test_type_details.plausibility_score;
         inferred_type := test_type;
         inferred_type_details := to_jsonb(test_type_details) - 'type_compatible';
-        EXIT;
-      END IF;
-    END LOOP;
+    END IF;
+  END LOOP;
   RETURN jsonb_strip_nulls(
     jsonb_build_object('type', inferred_type, 'details', inferred_type_details)
   );
